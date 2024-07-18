@@ -27,7 +27,7 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
 from .deformable_transformer_track import build_deforamble_transformer
 import copy
 from scipy.optimize import linear_sum_assignment
-from timesformer.models.vit import TimeSformer
+#from timesformer.models.vit import TimeSformer
 import matplotlib.pyplot as plt
 import numpy as np
 import torchvision.transforms as transforms
@@ -199,7 +199,7 @@ class DeformableDETR(nn.Module):
             plt.savefig(name + '_{}.png'.format(i))  
     
             
-    def forward(self, samples_targets, time_weight , unused_embed=None):
+    def forward(self, samples_targets, unused_embed=None):
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
         # training
@@ -210,7 +210,7 @@ class DeformableDETR(nn.Module):
             prepre_samples, _ = self.randshift(samples, targets)
             
             #pre frame pre_embed --> dict
-            pre_out, pre_embed, combined_samples = self.forward_once(pre_samples, prepre_samples, past_samples,time_weight, pre_targets, targets)  
+            pre_out, pre_embed, combined_samples = self.forward_once(pre_samples, prepre_samples, past_samples,pre_targets, targets)  
             #print(combined_samples.shape)  --> [4,3,2,224,224]
             
             # 特徴量計算、2つのフレームを同時入力のはず
@@ -223,14 +223,14 @@ class DeformableDETR(nn.Module):
             if torch.randn(1).item() > 0.0:
                 #print('train 1')
                 #out, _ = self.forward_train(samples, pre_embed)
-                out, _ = self.forward_train(samples, pre_embed, combined_samples,time_weight)     
+                out, _ = self.forward_train(samples, pre_embed, combined_samples)     
             else:
                 for key in pre_embed:
                     if key != 'feat':
                         pre_embed[key] = None
                 #print('train 2')
                 #out, _ = self.forward_train(samples, pre_embed)
-                out, _ = self.forward_train(samples, pre_embed, combined_samples,time_weight)
+                out, _ = self.forward_train(samples, pre_embed, combined_samples)
                 pre_out = None
                 pre_targets = None
             return out, pre_out, pre_targets
@@ -242,7 +242,7 @@ class DeformableDETR(nn.Module):
             return out, None
     
     @torch.no_grad()    
-    def forward_once(self, samples: NestedTensor, train_samples: NestedTensor, past_samples:NestedTensor,time_weight:float,targets=None,next_targets=None):
+    def forward_once(self, samples: NestedTensor, train_samples: NestedTensor, past_samples:NestedTensor,targets=None,next_targets=None):
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
         
@@ -317,7 +317,7 @@ class DeformableDETR(nn.Module):
         #time_flag = True
         time_frames = combined_samples
         
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_frames, time_weight, masks, pos, query_embeds)
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_frames,masks, pos, query_embeds)
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
@@ -350,7 +350,7 @@ class DeformableDETR(nn.Module):
             out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord}
         return out, pre_embed, combined_samples
     
-    def forward_train(self, samples: NestedTensor, pre_embed=None,com_samples=None,time_weight=None):
+    def forward_train(self, samples: NestedTensor, pre_embed=None,com_samples=None):
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
         """ The forward expects a NestedTensor, which consists of:
@@ -430,7 +430,7 @@ class DeformableDETR(nn.Module):
         # Deformable Transformer 
         #time_flag = True
         #hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs, masks, pos, query_embeds, pre_reference, pre_tgt)             
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,com_samples,time_weight, masks, pos, query_embeds, pre_reference, pre_tgt)           
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,com_samples, masks, pos, query_embeds, pre_reference, pre_tgt)           
             
         outputs_classes = []
         outputs_coords = []
@@ -737,29 +737,6 @@ class MLP(nn.Module):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
 
-class TimeSformer_getattn(nn.Module):
-    def __init__(self,pretrained_model):
-        super().__init__()
-
-        self.backbone = TimeSformer(img_size=224, patch_size = 16, num_classes=1000, num_frames=2, 
-                                    attention_type='divided_space_time',  pretrained_model=pretrained_model)
-        self.backbone_output_dim = 768
-    
-    def forward(self, x):
-        # xの形状は [batch_size, num_frames, channels, height, width]
-        
-        batch_size, channels, num_frames, height, width = x.shape
-        assert channels == 3 and height == 224 and width == 224, \
-            "Input shape must be [batch_size, 3 , num_frames , 224, 224]"
-
-
-        # TimeSformerモデルに入力
-        cls_token, features = self.backbone(x)
-        self.output_dim = 1000
-        self.head = nn.Linear(self.backbone_output_dim, self.output_dim, bias=True)
-
-        return features
-
 
 def build(args):
     if args.dataset_file == 'coco':
@@ -775,16 +752,7 @@ def build(args):
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
-    
-    #timesformer instances
-    if args.timesformer:
-        #print('time')
-        pretrained_model = './weight/TimeSformer_divST_8_224_SSv2.pyth'
-        time_attn = TimeSformer_getattn(pretrained_model)
-        transformer = build_deforamble_transformer(args,time_attn)
-    else:    
-        #print('no time')
-        transformer = build_deforamble_transformer(args,time_attn=None)
+    transformer = build_deforamble_transformer(args)
     
     
     model = DeformableDETR(

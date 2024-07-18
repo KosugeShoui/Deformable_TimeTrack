@@ -20,7 +20,7 @@ from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
 import numpy as np 
 import matplotlib.pyplot as plt
-from timesformer.models.vit import TimeSformer
+#from timesformer.models.vit import TimeSformer
 import os
 import cv2
 import torchvision.transforms as transforms
@@ -33,7 +33,7 @@ class DeformableTransformer(nn.Module):
                  activation="relu", return_intermediate_dec=False,
                  num_feature_levels=4, dec_n_points=4,  enc_n_points=4,
                  two_stage=False, two_stage_num_proposals=300,
-                 checkpoint_enc_ffn=False, checkpoint_dec_ffn=False,time_attn = False):
+                 checkpoint_enc_ffn=False, checkpoint_dec_ffn=False):
         super().__init__()
 
         self.d_model = d_model
@@ -55,10 +55,6 @@ class DeformableTransformer(nn.Module):
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
         
-        #Time Attention layer
-        self.time_attn = time_attn
-        self.out_extent = nn.Linear(768,256)
-        #self.conv2d = nn.Conv2d(in_channels=512, out_channels=3, kernel_size=1)
 
         if two_stage:
             self.enc_output = nn.Linear(d_model, d_model)
@@ -194,62 +190,19 @@ class DeformableTransformer(nn.Module):
         return combine_ten
 
     #def forward(self, srcs, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
-    def forward(self, srcs, time_frame,time_weight, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
+    def forward(self, srcs, time_frames,masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
         assert self.two_stage or query_embed is not None
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
-        
-        #print(self.time_attn)
-        if self.time_attn != None:
-            #print('time')
-            time_flag = True
-        else:
-            time_flag = False
+
         
             
         # prepare input for encoder
         src_flatten = []
-        time_flatten = []
         mask_flatten = []
         lvl_pos_embed_flatten = []
         spatial_shapes = []
         src_shape_list = []
-        
-        #Time-Module
-        if time_flag :
-            #[batch,3,2,height,width]
-            """
-            time_frame_sub = time_frame[3,:,:,:].to('cpu').detach().numpy().copy()
-
-            # 画像をnumpy配列に変換
-            image1 = time_frame_sub[:, 0, :, :].transpose(1, 2, 0)
-            image2 = time_frame_sub[:, 1, :, :].transpose(1, 2, 0)
-
-            # 画像をプロットして横並びに表示
-            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-            axes[0].imshow(image1)
-            axes[0].axis('off')
-            axes[0].set_title('Image 1')
-            axes[1].imshow(image2)
-            axes[1].axis('off')
-            axes[1].set_title('Image 2')
-            plt.tight_layout()
-            plt.savefig('horizontal_images.png')
-            """
-            """
-            map1 =map1[:,:3,:,:]
-            map3 = map1[3,:,:].to('cpu').detach().numpy().copy()
-            map3 =np.transpose(map3,(1,2,0))
-            print(map3.shape)
-            plt.imshow(map3)
-            plt.savefig('map3.png')
-            """
-            
-            time_memory = self.time_attn(time_frame)
-            time_memory = time_memory[:,::2,:]
-            #time_memory = time_memory.view(1, 196, 256, 3).mean(dim=-1)
-            time_memory = self.out_extent(time_memory)
-            #[batch , 196, 256]
      
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
             
@@ -258,64 +211,6 @@ class DeformableTransformer(nn.Module):
             #print(src_shape_list)
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
-            #print(src_shape_list)
-            """
-            if lvl == 0:
-                src_sub2 = src[bs-1,:,:,:].to('cpu').detach().numpy().copy()
-                src_sub2 = np.mean(src_sub2[:,:,:],axis=0)
-                src_sub2 = self.normalize_tensor_rev(src_sub2)
-                plt.imshow(src_sub2,cmap='jet')
-                plt.savefig('w_weightedmap.png')
-            """
-            #print(lvl)
-            # Feature Map + Resized Attention Weight or F * Attention Weight
-            if time_flag:
-                time_memory_map = time_memory.view(bs,14,14,256)
-                time_memory_map = self.normalize_14x14(time_memory_map)
-                # Attention Weight Threshold [0.3.0.5.0.7]
-                time_memory_map = F.interpolate(time_memory_map.permute(0, 3, 1, 2), size=(h, w), mode='bilinear', align_corners=False)
-                # patch selection 
-                #time_memory_map = self.threshold_array(time_memory_map,0.7)
-                time_memory_map = time_memory_map.permute(0, 1, 2, 3)
-                #print(time_memory_map.shape)
-                # Scaling for src matching time_memory_map
-                #time_memory_map = self.scale_tensor(time_memory_map, 0 , 3)
-                
-                """
-                if lvl == 0:
-                #for i in range(256):
-                #visual data prepare
-                #time_memory_map_sub = time_memory_map[bs-1,:,:,:].to('cpu').detach().numpy().copy()
-                    time_memory_map_sub = time_memory_map[bs-1,:,:,:].to('cpu').detach().numpy().copy()
-                    #print('Time Mem Scale = ',np.max(time_memory_map_sub),np.min(time_memory_map_sub))
-                    #time_memory_map_sub = time_memory_map_sub
-                    #time_memory_map_sub = 1 - time_memory_map_sub
-                    time_memory_map_sub = np.mean(time_memory_map_sub,axis=0)
-                    save_path = 'w_eval_time_train_11'
-                    os.makedirs(save_path,exist_ok=True)
-                    list_num = len(os.listdir(save_path))
-                    #1 time memory
-                    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-                    plt.imshow(time_memory_map_sub,cmap='jet')
-                    plt.axis('tight')
-                    plt.axis('off')
-                    plt.savefig(save_path + '/time_weight_{}.png'.format(list_num+1),bbox_inches='tight',pad_inches=0)
-                """
-                
-                
-                
-                
-                # memory flatten 
-                # 最も大きい特徴マップにのみAttention Weightを加える
-                if lvl == 0:
-                    time_memory_map = time_memory_map.flatten(2).transpose(1, 2)
-                else:
-                    time_memory_map = time_memory_map.flatten(2).transpose(1, 2)
-                    time_memory_map = time_memory_map * 0
-                    #print(time_memory_map)
-                    
-                time_flatten.append(time_memory_map)
-               
             # Normal Phase
             src = src.flatten(2).transpose(1, 2)
             mask = mask.flatten(1)
@@ -335,44 +230,6 @@ class DeformableTransformer(nn.Module):
         # encoder
         if memory is None:
             memory = self.encoder(src_flatten, spatial_shapes, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
-            #time track
-            if time_flag:
-                time_flatten = torch.cat(time_flatten, 1)
-                #print(time_flatten.shape)
-                #min_vals = memory.min(dim=1, keepdim=True).values
-                #max_vals = memory.max(dim=1, keepdim=True).values
-                #time_flatten2  = time_flatten * (max_vals - min_vals) + min_vals
-                #max_values = torch.max(time_flatten, dim=1).values
-                #min_values = torch.min(time_flatten, dim=1).values
-                #print("Max values along feature dimension:\n", max_values,max_vals)
-                #print("Min values along feature dimension:\n", min_values,min_vals)
-                #memory2 = memory
-                memory = memory + 0.01 * time_weight * time_flatten
-                #Encode後のAttentionWeigntの可視化
-                """
-                for i in tqdm.tqdm(range(256)):
-                
-                    memory_h,memory_w = src_shape_list[0][0],src_shape_list[0][1]
-                    memory_sub = memory[:,:memory_h*memory_w,:]
-                    src_sub = memory_sub[bs-1,:,:].to('cpu').detach().numpy().copy()
-                    src_sub = src_sub.reshape(memory_h,memory_w,256)
-                    #src_sub = src_sub[:,:,]
-                    
-                    src_sub = src_sub[:,:,i]
-                    #src_sub = self.threshold_array(src_sub,0.5,np.min(src_sub))
-                    #print('Mem Scale = ',np.max(src_sub),np.min(src_sub))
-                    src_sub = self.normalize_tensor(src_sub)
-                    save_path = 'w_eval_timemem_train_13'
-                    os.makedirs(save_path,exist_ok=True)
-                    list_num = len(os.listdir(save_path))
-                    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-                    plt.imshow(src_sub,cmap='jet')
-                    plt.axis('tight')
-                    plt.axis('off')
-                    plt.savefig(save_path +'/w_eval_encode_{}.png'.format(list_num+1),bbox_inches='tight',pad_inches=0)
-                """
-                
-                
                 
             
         # prepare input for decoder
@@ -631,7 +488,7 @@ def _get_activation_fn(activation):
     raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
 
-def build_deforamble_transformer(args,time_attn):
+def build_deforamble_transformer(args):
     return DeformableTransformer(
         d_model=args.hidden_dim,
         nhead=args.nheads,
@@ -647,6 +504,5 @@ def build_deforamble_transformer(args,time_attn):
         two_stage=args.two_stage,
         two_stage_num_proposals=args.num_queries,
         checkpoint_enc_ffn=args.checkpoint_enc_ffn,
-        checkpoint_dec_ffn=args.checkpoint_dec_ffn,
-        time_attn=time_attn
+        checkpoint_dec_ffn=args.checkpoint_dec_ffn
     )

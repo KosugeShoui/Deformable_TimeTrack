@@ -570,17 +570,7 @@ def build(args):
 
     
     backbone = build_backbone(args)
-    #timesformer instances
-    if args.timesformer:
-        #print('time')
-        #pretrained_model = './weight/TimeSformer_divST_8_224_SSv2.pyth'
-        pretrained_model = None
-        
-        time_attn = TimeSformer_getattn(pretrained_model)
-        transformer = build_deforamble_transformer(args,time_attn)
-    else:    
-        #print('no time')
-        transformer = build_deforamble_transformer(args,time_attn=None)
+    transformer = build_deforamble_transformer(args)
     
 
     model = DeformableDETR(

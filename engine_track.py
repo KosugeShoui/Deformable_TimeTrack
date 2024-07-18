@@ -77,7 +77,7 @@ def save_img(samples,tensor_type,name):
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, scaler: torch.cuda.amp.GradScaler,
-                    epoch: int, new_weight_dict : dict, time_weight : float , max_norm: float = 0,fp16=False):
+                    epoch: int, new_weight_dict : dict , max_norm: float = 0,fp16=False):
     fp16 = False
     tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
     
@@ -91,13 +91,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = '\n --------- Epoch : [{}] ----------\n'.format(epoch + 1)
     print_freq = 300
 
-    
-    
-    #data_iter = iter(data_loader)
-    #first_batch = next(data_iter)
-    #i,j,k = first_batch
-    #save_img(i,tensor_type,'w_input_frame/sample_train')
-    
     
     prefetcher = data_prefetcher(data_loader, device, prefetch=True)
     samples, targets, pre_samples = prefetcher.next()
@@ -115,15 +108,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         with torch.cuda.amp.autocast(enabled=fp16):
             # input frames
-            outputs, pre_outputs, pre_targets = model([samples, targets, pre_samples],time_weight)
+            outputs, pre_outputs, pre_targets = model([samples, targets, pre_samples])
             loss_dict = criterion(outputs, targets, pre_outputs, pre_targets)
             
             #weight_dict = criterion.weight_dict
             #schedule weight
             weight_dict = new_weight_dict
-            #print('giou weight = ',weight_dict['loss_giou'])
-            #print('\n')
-            #print(new_weight_dict)
             
             losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 

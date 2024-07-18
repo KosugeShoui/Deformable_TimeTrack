@@ -51,7 +51,7 @@ def get_args_parser():
     
     #スケジューリング導入するかどうか
     parser.add_argument('--loss_schedule', default=False, action='store_true')
-    parser.add_argument('--time_sche', default=False, action='store_true')
+    #parser.add_argument('--time_sche', default=False, action='store_true')
     parser.add_argument('--timesformer',default=False,action='store_true')
 
     parser.add_argument('--sgd', action='store_true')
@@ -349,9 +349,6 @@ def main(args):
      # ベストepochのためのloss_dictの定義
     loss_list = []
     for epoch in tqdm(range(args.start_epoch, args.epochs)):
-        path_flag = False
-        #print(epoch)
-        #print(args.start_epoch)
         if args.distributed:
             sampler_train.set_epoch(epoch)
 
@@ -367,20 +364,10 @@ def main(args):
             new_weight_dict = criterion.weight_dict
         
         
-        if args.time_sche :
-            print('\n --- Time Weight Scheduling True ---\n')
-            epoch_num = args.epochs
-            x = np.linspace(0,epoch_num,100)
-            scaled_x = 12 * (x / 50) - 6
-            time_weight = sigmoid(scaled_x)
-            time_alpha = time_weight[epoch]
-        else:
-            time_alpha = 1.0
-        
         
         #learning start 
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, scaler, epoch,new_weight_dict, time_alpha, args.clip_max_norm, fp16=args.fp16)
+            model, criterion, data_loader_train, optimizer, device, scaler, epoch,new_weight_dict,args.clip_max_norm, fp16=args.fp16)
         
         lr_scheduler.step()
                 

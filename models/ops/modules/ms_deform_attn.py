@@ -57,17 +57,29 @@ class MSDeformAttn(nn.Module):
         :return output                     (N, Length_{query}, C)
         """
         N, Len_q, _ = query.shape
+        #print('query = ',query.shape)
         N, Len_in, _ = input_flatten.shape
+        #print('input flatten shape = ',input_flatten.shape)
+        #[4,13469,4]
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
+        # linear
+        # このvalueがキーになってるらしい
+        # このinput flattenを変えればいい
         value = self.value_proj(input_flatten)
+        #print(value.shape)
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
+        #このvalueを過去のフレームにすればいいんじゃね
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
+        
+        # オフセット生成
         sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
         attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
         attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
         # N, Len_q, n_heads, n_levels, n_points, 2
+        
+        # Deformable points 変形した参照点を獲得
         if reference_points.shape[-1] == 2:
             sampling_locations = reference_points[:, :, None, :, None, :] \
                                  + sampling_offsets / input_spatial_shapes[None, None, None, :, None, :]
@@ -77,7 +89,12 @@ class MSDeformAttn(nn.Module):
         else:
             raise ValueError(
                 'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
+        
+        # Deformable Attention
         output = MSDeformAttnFunction.apply(
             value, input_spatial_shapes, sampling_locations, attention_weights, self.im2col_step)
+        
+        # Linear
         output = self.output_proj(output)
+        #print('output = ',output.shape)
         return output
