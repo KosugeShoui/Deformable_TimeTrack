@@ -190,13 +190,11 @@ class DeformableTransformer(nn.Module):
         return combine_ten
 
     #def forward(self, srcs, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
-    def forward(self, srcs, time_frames,masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
+    def forward(self, srcs, time_frames, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
         assert self.two_stage or query_embed is not None
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
 
-        
-            
         # prepare input for encoder
         src_flatten = []
         mask_flatten = []
@@ -229,6 +227,7 @@ class DeformableTransformer(nn.Module):
 
         # encoder
         if memory is None:
+            #Deformable Attnの引数ではsrc_flattenがoutput、spatialshapeがinput_flattnの形式になってる
             memory = self.encoder(src_flatten, spatial_shapes, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
                 
             

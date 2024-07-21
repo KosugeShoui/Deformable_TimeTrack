@@ -188,9 +188,9 @@ class DeformableDETR(nn.Module):
         fp16 = False
         tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
         time_frames = self.stack_tensor(past_samples,samples,tensor_type)
-        time_weight = 1.0     
+        #time_weight = 1.0     
         
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs,time_frames,time_weight,masks, pos, query_embeds)
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs,time_frames,masks, pos, query_embeds)
         
         
         cur_hs = hs
@@ -223,9 +223,8 @@ class DeformableDETR(nn.Module):
         if pre_embed is not None:
             # track mode
             pre_reference, pre_tgt = pre_embed['reference'], pre_embed['tgt']
-            
-            time_weight = 1.0        
-            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_frames,time_weight, masks, pos, query_embeds, pre_reference, pre_tgt, memory)
+           
+            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_frames,masks, pos, query_embeds, pre_reference, pre_tgt, memory)
             outputs_classes = []
             outputs_coords = []
             for lvl in range(hs.shape[0]):

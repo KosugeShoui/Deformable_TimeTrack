@@ -80,6 +80,7 @@ class MSDeformAttn(nn.Module):
         # N, Len_q, n_heads, n_levels, n_points, 2
         
         # Deformable points 変形した参照点を獲得
+        # このreferencepointが着目する点、つまりクエリに相当するピクセルの場所??
         if reference_points.shape[-1] == 2:
             sampling_locations = reference_points[:, :, None, :, None, :] \
                                  + sampling_offsets / input_spatial_shapes[None, None, None, :, None, :]
