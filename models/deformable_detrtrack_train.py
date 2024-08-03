@@ -263,16 +263,12 @@ class DeformableDETR(nn.Module):
         
         srcs = []
         masks = []
+        # STD prepare
+        pre_srcs = []
         
         for l, (feat, feat2) in enumerate(zip(features, pre_feat)):
             src, mask = feat.decompose()
             src2, _ = feat2.decompose()
-            #print('src1 = ',src.shape)
-            #print('src2 = ',src2.shape)
-            #if l == 0:
-             #   map1,map2 = src, src2
-                #print(stack_src.shape)
-        
             
             """
             if l == 1:
@@ -286,38 +282,49 @@ class DeformableDETR(nn.Module):
                 plt.imshow(src_sub2,cmap='jet')
                 plt.savefig('w_input_check/w_src2_map_1024.png')
             """
-            
-            
-                
-            
+            #print(src2.shape)
+            #print(self.input_proj[l](src).shape)
+            #[4,256,115,102]
             srcs.append(self.combine(torch.cat([self.input_proj[l](src), self.input_proj[l](src2)], dim=1)))
+            # STD 前フレームの特徴量
+            pre_srcs.append(self.input_proj[l](src2))
+            
             masks.append(mask)
             assert mask is not None
+
+        #print(len(srcs),len(pre_srcs))
 
         if self.num_feature_levels > len(srcs):
             _len_srcs = len(srcs)
             for l in range(_len_srcs, self.num_feature_levels):
                 if l == _len_srcs:
+                    # STD
                     src = self.combine(torch.cat([self.input_proj[l](features[-1].tensors), self.input_proj[l](pre_feat[-1].tensors)], dim=1))
+                    pre_src = self.combine(torch.cat([self.input_proj[l](features[-1].tensors), self.input_proj[l](pre_feat[-1].tensors)], dim=1))
                 else:
                     src = self.input_proj[l](srcs[-1])
+                    # STD
+                    pre_src = self.input_proj[l](pre_srcs[-1])
 
                 m = samples.mask
                 mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
+                # STD
                 srcs.append(src)
+                pre_srcs.append(pre_src)
                 masks.append(mask)
                 pos.append(pos_l)
-            
+                
+
         query_embeds = None
         if not self.two_stage:
             query_embeds = self.query_embed.weight
         #hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, masks, pos, query_embeds)
         #setttings
         #time_flag = True
-        time_frames = combined_samples
+        #time_frames = combined_samples
         
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, time_frames,masks, pos, query_embeds)
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs, pre_srcs, masks, pos, query_embeds)
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
@@ -351,8 +358,8 @@ class DeformableDETR(nn.Module):
         return out, pre_embed, combined_samples
     
     def forward_train(self, samples: NestedTensor, pre_embed=None,com_samples=None):
-        fp16 = False
-        tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
+        #fp16 = False
+        #tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -383,6 +390,7 @@ class DeformableDETR(nn.Module):
         
         srcs = []
         masks = []
+        pre_srcs = []
         
         #self.save_img(samples,tensor_type,'w_input_check/w_first_train') 
         #self.save_img(pre_samples,tensor_type,'w_input_check/w_pre_train') 
@@ -390,38 +398,33 @@ class DeformableDETR(nn.Module):
         for l, (feat, feat2) in enumerate(zip(features, pre_feat)):
             src, mask = feat.decompose()
             src2, _ = feat2.decompose()
-            
-            """
-            if l == 0:
-                src_sub = src[3,:,:,:].to('cpu').detach().numpy().copy()
-                src_sub = np.mean(src_sub[:,:,:],axis=0)
-                src_sub2 = src2[3,:,:,:].to('cpu').detach().numpy().copy()
-                src_sub2 = np.mean(src_sub2[:,:,:],axis=0)
-                #src_sub2 = self.normalize_tensor_rev(src_sub2)
-                plt.imshow(src_sub,cmap='jet')
-                plt.savefig('w_input_check/w_src_map_512.png')
-                plt.imshow(src_sub2,cmap='jet')
-                plt.savefig('w_input_check/w_src2_map_512.png')
-            """
-            
+        
+            pre_srcs.append(self.input_proj[l](src2))
             srcs.append(self.combine(torch.cat([self.input_proj[l](src), self.input_proj[l](src2)], dim=1)))
             masks.append(mask)
             assert mask is not None
 
+        #print(len(srcs),len(pre_srcs))
+        
         if self.num_feature_levels > len(srcs):
             _len_srcs = len(srcs)
             for l in range(_len_srcs, self.num_feature_levels):
                 if l == _len_srcs:
                     src = self.combine(torch.cat([self.input_proj[l](features[-1].tensors), self.input_proj[l](pre_feat[-1].tensors)], dim=1))
+                    pre_src = self.combine(torch.cat([self.input_proj[l](features[-1].tensors), self.input_proj[l](pre_feat[-1].tensors)], dim=1))
                 else:
                     src = self.input_proj[l](srcs[-1])
+                    pre_src = self.input_proj[l](pre_srcs[-1])
+                    
 
                 m = samples.mask
                 mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
                 srcs.append(src)
+                pre_srcs.append(pre_src)
                 masks.append(mask)
                 pos.append(pos_l)
+                
             
         query_embeds = None
         if not self.two_stage:
@@ -430,7 +433,7 @@ class DeformableDETR(nn.Module):
         # Deformable Transformer 
         #time_flag = True
         #hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs, masks, pos, query_embeds, pre_reference, pre_tgt)             
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,com_samples, masks, pos, query_embeds, pre_reference, pre_tgt)           
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs, pre_srcs, masks, pos, query_embeds, pre_reference, pre_tgt)           
             
         outputs_classes = []
         outputs_coords = []

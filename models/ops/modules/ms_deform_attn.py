@@ -45,7 +45,11 @@ class MSDeformAttn(nn.Module):
         xavier_uniform_(self.output_proj.weight.data)
         constant_(self.output_proj.bias.data, 0.)
 
-    def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_padding_mask=None):
+    def forward(self, query, reference_points, input_flatten, input_spatial_shapes ,input_padding_mask=None):
+        #print(input_padding_mask)
+        #print('input spatial =',input_spatial_shapes.shape)
+        #print('input = ',input_flatten)
+        #print('query =',query)
         """
         :param query                       (N, Length_{query}, C)
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
@@ -56,21 +60,23 @@ class MSDeformAttn(nn.Module):
 
         :return output                     (N, Length_{query}, C)
         """
+        #print(input_spatial_shapes.shape)
         N, Len_q, _ = query.shape
         #print('query = ',query.shape)
-        N, Len_in, _ = input_flatten.shape
-        #print('input flatten shape = ',input_flatten.shape)
         #[4,13469,4]
+        N, Len_in, _ = input_flatten.shape
+        #論文の図のInput Feature map
+        #print(input_flatten)
+        #print('input flatten shape = ',input_flatten.shape)
+        #[4,13469,256]
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
         # linear
-        # このvalueがキーになってるらしい
-        # このinput flattenを変えればいい
         value = self.value_proj(input_flatten)
         #print(value.shape)
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
-        #このvalueを過去のフレームにすればいいんじゃね
+        #valueの形式変換
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
         
         # オフセット生成
@@ -78,9 +84,12 @@ class MSDeformAttn(nn.Module):
         attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
         attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
         # N, Len_q, n_heads, n_levels, n_points, 2
+        #print(attention_weights.shape)
+        
         
         # Deformable points 変形した参照点を獲得
         # このreferencepointが着目する点、つまりクエリに相当するピクセルの場所??
+        #print(reference_points.shape)
         if reference_points.shape[-1] == 2:
             sampling_locations = reference_points[:, :, None, :, None, :] \
                                  + sampling_offsets / input_spatial_shapes[None, None, None, :, None, :]

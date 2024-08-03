@@ -190,45 +190,91 @@ class DeformableTransformer(nn.Module):
         return combine_ten
 
     #def forward(self, srcs, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
-    def forward(self, srcs, time_frames, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
+    def forward(self, srcs, pre_srcs, masks, pos_embeds, query_embed=None, pre_reference=None, pre_tgt=None, memory=None):
         assert self.two_stage or query_embed is not None
-        fp16 = False
-        tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
+        #fp16 = False
+        #tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
 
         # prepare input for encoder
         src_flatten = []
+        # STD
+        pre_src_flatten = []
+        
         mask_flatten = []
         lvl_pos_embed_flatten = []
         spatial_shapes = []
         src_shape_list = []
+        #print(len(pre_srcs))
      
-        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
+        for lvl, (src, pre_src, mask, pos_embed) in enumerate(zip(srcs, pre_srcs, masks, pos_embeds)):
+            #print(lvl)
             
             bs, c, h, w = src.shape
             src_shape_list.append([h,w])
             #print(src_shape_list)
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
+            #print(mask.shape)
+            #print(src.shape)
+            """
+            if lvl == 0:
+                src_sub2 = src[0,:,:,:].to('cpu').detach().numpy().copy()
+                src_sub2 = np.mean(src_sub2,axis=0)
+                
+                pre_src_sub2 = pre_src[0,:,:,:].to('cpu').detach().numpy().copy()
+                pre_src_sub2 = np.mean(pre_src_sub2,axis=0)
+                
+                save_path = 'w_train_inputflatten'
+                os.makedirs(save_path,exist_ok=True)
+                list_num = len(os.listdir(save_path))
+                plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                plt.imshow(src_sub2,cmap='jet')
+                plt.axis('tight')
+                plt.axis('off')
+                plt.savefig(save_path + '/w_inputflatten_{}.png'.format(list_num+1),bbox_inches='tight',pad_inches=0)
+                
+                plt.imshow(pre_src_sub2,cmap='jet')
+                plt.savefig(save_path + '/w_inputflatten_pre_{}.png'.format(list_num+1),bbox_inches='tight',pad_inches=0)
+            """    
+            
+                
             # Normal Phase
             src = src.flatten(2).transpose(1, 2)
+            # STD
+            pre_src = pre_src.flatten(2).transpose(1, 2)
+            
             mask = mask.flatten(1)
             pos_embed = pos_embed.flatten(2).transpose(1, 2)
             lvl_pos_embed = pos_embed + self.level_embed[lvl].view(1, 1, -1)
             lvl_pos_embed_flatten.append(lvl_pos_embed)
             src_flatten.append(src)
+            # STD
+            pre_src_flatten.append(pre_src)
             mask_flatten.append(mask)
+
+
+            
         
         # Final flatten phase
         src_flatten = torch.cat(src_flatten, 1)
+        # STD
+        pre_src_flatten= torch.cat(pre_src_flatten,1)
+        
         mask_flatten = torch.cat(mask_flatten, 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
         spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
+        #print(valid_ratios)
+        #[4,4,2]
+        #print(spatial_shapes.shape)
+        #print('src = ',src_flatten.shape)
+        #print('pre src = ',pre_src_flatten.shape)
 
         # encoder
         if memory is None:
-            #Deformable Attnの引数ではsrc_flattenがoutput、spatialshapeがinput_flattnの形式になってる
-            memory = self.encoder(src_flatten, spatial_shapes, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+            #src_flatten --> query, valid_ratio --> input_flatten
+            # STD
+            memory = self.encoder(src_flatten, pre_src_flatten, spatial_shapes, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
                 
             
         # prepare input for decoder
@@ -296,7 +342,12 @@ class DeformableTransformerEncoderLayer(nn.Module):
         self.self_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
-
+        
+        # STD attention
+        self.std_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
+        #self.std_dropout = nn.Dropout(dropout)
+        #self.std_norm = nn.LayerNorm(d_model)
+        
         # ffn
         self.linear1 = nn.Linear(d_model, d_ffn)
         self.activation = _get_activation_fn(activation)
@@ -318,12 +369,31 @@ class DeformableTransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
-    def forward(self, src, pos, reference_points, spatial_shapes, padding_mask=None):
+    # layerの引数はここと対応している
+    # STD
+    def forward(self, src, pre_src, pos, reference_points, spatial_shapes, padding_mask=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, padding_mask)
-        src = src + self.dropout1(src2)
+        # ここです、いじるの
+        # MS Deformableのforwardの引数の順番
+        # (self, query, reference_points, input_flatten, input_spatial_shapes ,input_padding_mask=None):
+        # このsrcが特徴マップになってる
+        # ここのsrcを過去の特徴マップにすればよいか
+        
+        src2 = self.std_attn(self.with_pos_embed(src, pos), reference_points, pre_src, spatial_shapes, padding_mask)
+        src3 = self.self_attn(self.with_pos_embed(src2, pos), reference_points, src, spatial_shapes, padding_mask)
+        #STD
+        
+        
+        # Dropout & Norm
+        src = src + self.dropout1(src3)
         src = self.norm1(src)
-
+        
+        # (self, query, reference_points, input_flatten, input_spatial_shapes ,input_padding_mask=None):
+        # STD
+        #src_std2 = self.std_attn(self.with_pos_embed(src, pos), reference_points, pre_src, spatial_shapes, padding_mask)
+        #src_std = src + self.std_dropout(src_std2)
+        #src_std = self.std_norm(src_std)
+        
         # ffn
         if self.checkpoint_ffn:
             src = torch.utils.checkpoint.checkpoint(self.forward_ffn, src)
@@ -354,11 +424,20 @@ class DeformableTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, src, spatial_shapes, valid_ratios, pos=None, padding_mask=None):
+    def forward(self, src, pre_src, spatial_shapes, valid_ratios, pos=None, padding_mask=None):
         output = src
         reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
+        #print('reference = ',reference_points.shape)
+        #[4,15637,4,2]
+        #print(pos.shape)
+        #[4,15637,256]
+        #print(output.shape)
+        #print(spatial_shapes.shape)
+        #print('pos = ',pos)
+
         for layer in self.layers:
-            output = layer(output, pos, reference_points, spatial_shapes, padding_mask)
+            # STD
+            output = layer(output, pre_src, pos, reference_points, spatial_shapes, padding_mask)
 
         return output
 

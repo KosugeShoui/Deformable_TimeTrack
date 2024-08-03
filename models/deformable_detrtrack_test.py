@@ -153,12 +153,16 @@ class DeformableDETR(nn.Module):
             pre_feat = features
         
         srcs = []
+        pre_srcs = []
         masks = []
         
         for l, (feat, feat2) in enumerate(zip(features, pre_feat)):
             src, mask = feat.decompose()
             src2, _ = feat2.decompose()
             srcs.append(self.combine(torch.cat([self.input_proj[l](src), self.input_proj[l](src2)], dim=1)))
+            # STD
+            pre_srcs.append(self.input_proj[l](src2))
+            
             masks.append(mask)
             assert mask is not None
         
@@ -167,13 +171,17 @@ class DeformableDETR(nn.Module):
             for l in range(_len_srcs, self.num_feature_levels):
                 if l == _len_srcs:
                     src = self.combine(torch.cat([self.input_proj[l](features[-1].tensors), self.input_proj[l](pre_feat[-1].tensors)], dim=1))
+                    pre_src = self.combine(torch.cat([self.input_proj[l](features[-1].tensors), self.input_proj[l](pre_feat[-1].tensors)], dim=1))
                 else:
                     src = self.input_proj[l](srcs[-1])
+                    pre_src = self.input_proj[l](pre_srcs[-1])
 
                 m = samples.mask
                 mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
+                # STD
                 srcs.append(src)
+                pre_srcs.append(pre_src)
                 masks.append(mask)
                 pos.append(pos_l)
         
@@ -182,15 +190,8 @@ class DeformableDETR(nn.Module):
         if not self.two_stage:
             query_embeds = self.query_embed.weight
         
-        
-        #settings
-        #time_flag = True
-        fp16 = False
-        tensor_type = torch.cuda.HalfTensor if fp16 else torch.cuda.FloatTensor
-        time_frames = self.stack_tensor(past_samples,samples,tensor_type)
-        #time_weight = 1.0     
-        
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs,time_frames,masks, pos, query_embeds)
+        # STD
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, memory = self.transformer(srcs,pre_srcs,masks, pos, query_embeds)
         
         
         cur_hs = hs
@@ -223,8 +224,8 @@ class DeformableDETR(nn.Module):
         if pre_embed is not None:
             # track mode
             pre_reference, pre_tgt = pre_embed['reference'], pre_embed['tgt']
-           
-            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,time_frames,masks, pos, query_embeds, pre_reference, pre_tgt, memory)
+            # STD
+            hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, _ = self.transformer(srcs,pre_srcs,masks, pos, query_embeds, pre_reference, pre_tgt, memory)
             outputs_classes = []
             outputs_coords = []
             for lvl in range(hs.shape[0]):
@@ -530,28 +531,6 @@ class MLP(nn.Module):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
 
-class TimeSformer_getattn(nn.Module):
-    def __init__(self,pretrained_model):
-        super().__init__()
-
-        self.backbone = TimeSformer(img_size=224, patch_size = 16,num_classes=1000, num_frames=2, 
-                                    attention_type='divided_space_time',  pretrained_model=pretrained_model)
-        self.backbone_output_dim = 768
-    
-    def forward(self, x):
-        # xの形状は [batch_size, num_frames, channels, height, width]
-        
-        batch_size, channels, num_frames, height, width = x.shape
-        assert channels == 3 and height == 224 and width == 224, \
-            "Input shape must be [batch_size, 3 , num_frames , 224, 224]"
-
-
-        # TimeSformerモデルに入力
-        cls_token, features = self.backbone(x)
-        self.output_dim = 1000
-        self.head = nn.Linear(self.backbone_output_dim, self.output_dim, bias=True)
-
-        return features
 
 
 def build(args):

@@ -280,8 +280,6 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-    
-        #missing_keys, unexpected_keys = model_without_ddp.load_state_dict(new_point, strict=False)
         missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         
